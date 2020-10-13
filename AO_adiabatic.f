@@ -113,7 +113,8 @@ do frame = frame_init , frame_final , frame_step
     If( QMMM ) then
         Net_Charge_MM = Net_Charge
 !        CALL EhrenfestForce ( Extended_Cell , ExCell_basis , MO_bra , MO_ket , UNI , representation="MO")
-        CALL SH_Force( Extended_Cell , ExCell_basis , MO_bra , MO_ket , UNI , t_rate )
+        CALL SH_Force( Extended_Cell , ExCell_basis , MO_bra , MO_ket ,  UNI , t_rate )
+        !CALL SH_Force( Extended_Cell , ExCell_basis ,  UNI )
     end If
 
     ! propagate t -> (t + t_rate) with UNI%erg(t) ...
@@ -159,7 +160,7 @@ do frame = frame_init , frame_final , frame_step
             CALL MolecularMechanics( t_rate , frame - 1 , Net_Charge = Net_Charge_MM )   
 
             ! IF QM_erg < 0 => turn off QMMM ; IF QM_erg > 0 => turn on QMMM ...
-            QMMM = (.NOT. (Unit_Cell% QM_erg < D_zero)) .AND. (HFP_Forces == .true.)
+            QMMM = (.NOT. (Unit_Cell% QM_erg <= D_zero)) .AND. (HFP_Forces == .true.)
 
         case default
 
@@ -189,7 +190,7 @@ do frame = frame_init , frame_final , frame_step
         If( n_part == 2 ) CALL MO_Occupation( t, MO_bra, MO_ket, UNI, UNI )
     End If
 
-    Print*, frame 
+!    Print*, frame 
 
 end do
 

@@ -75,14 +75,16 @@ PES(1) = electron_state
 PES(2) = hole_state
 end if
 
+!call init_random_seed()
+
 mm = size(basis)
 nn = n_part
 
 allocate( F_mtx     (system%atoms,system%atoms,3) , source=D_zero )
 allocate( F_vec     (system%atoms)                , source=D_zero )
-allocate( d_vec     (system%atoms,mm,2,3)         , source=D_zero )
+allocate( d_vec     (system%atoms,mm,mm,3)         , source=D_zero )
 allocate( VN        (system%atoms,3)              , source= D_zero )
-allocate( g_switch  (mm,2)                        , source= D_zero )
+allocate( g_switch  (mm,mm)                        , source= D_zero )
 If( .NOT. allocated(Kernel) ) then
     allocate( Kernel  (mm,mm) , source = D_zero )
 end if
@@ -143,11 +145,11 @@ If( system%QMMM(k) == "MM" .OR. system%flex(k) == F_ ) cycle
                 !  iS == i-State,
                 ! where 1-State == eletron and 2-State == hole;
                 !============================================================================
-                do iS = 1 , 2 
+                do iS = 1 , mm 
 
-                    A2(:)                               = QM%L(PES(is),:)                    ! \Phi_{\alpha}    
-                    A4(:)                               = QM%L(PES(is),:)*QM%erg(PES(is))    ! Q'_{\phi \alpha}
-                    forall( j=1:DOS_Atom_K ) A5(j)      = QM%L(PES(is) , BasisPointer_K+j )  ! Q_{\phi n}          
+                    A2(:)                               = QM%L(is,:)                    ! \Phi_{\alpha}    
+                    A4(:)                               = QM%L(is,:)*QM%erg(is)    ! Q'_{\phi \alpha}
+                    forall( j=1:DOS_Atom_K ) A5(j)      = QM%L(is , BasisPointer_K+j )  ! Q_{\phi n}          
 
                     !==========================================================
                     call gemv( A1, A2 , R1 , trans='T' )   ! N_{\alpha n}^{T} * \Phi_{\alpha} result vector size n
@@ -169,17 +171,17 @@ If( system%QMMM(k) == "MM" .OR. system%flex(k) == F_ ) cycle
                     call gemv( R3 , A5 , R2 )
                     d_vec(k,:,is,xyz) = d_vec(k,:,is,xyz) + R2
 
-                if( isnan( d_vec(k,PES(is),is,xyz) )) stop 'error in d_vec'
+                if( isnan( d_vec(k,is,is,xyz) )) stop 'error in d_vec'
+
+                forall( i=1:mm , i .ne. is ) d_vec(k,i,is,xyz) = d_vec(k,i,is,xyz) / ( QM%erg(i) - QM%erg(is) ) 
 
                 enddo
 
-                Force(xyz) = d_vec(k,PES(1),1,xyz) - d_vec(k,PES(2),2,xyz)
+                Force(xyz) = d_vec(k,PES(1),PES(1),xyz) - d_vec(k,PES(2),PES(2),xyz)
 
-                forall( i=1:mm , j=1:2 , i .ne. PES(j) ) d_vec(k,i,j,xyz) = d_vec(k,i,j,xyz) / ( QM%erg(i) - QM%erg(PES(j)) ) 
-                forall( i=1:mm , j=1:2 , i  ==  PES(j) ) d_vec(k,i,j,xyz) = d_zero
+                forall( i=1:mm , j=1:mm , i == j ) d_vec(k,i,j,xyz) = d_zero
 
-                g_switch(:,1) = g_switch(:,1) + VN(k,xyz) * d_vec(k,:,1,xyz)  
-                g_switch(:,2) = g_switch(:,2) + VN(k,xyz) * d_vec(k,:,2,xyz)  
+                forall( i = 1 : mm ) g_switch(i,:) = g_switch(i,:) + VN(k,xyz) * d_vec(k,i,:,xyz)  
         end do 
 
         atom(k)% Ehrenfest = Force * eVAngs_2_Newton 
@@ -284,10 +286,10 @@ end subroutine Preprocess
 
  real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) 
  real*8     , allocatable   :: A1(:,:) , A2(:,:) , A3(:,:) , A4(:), A5(:)
- integer                    :: j , i , k ,l 
- real*8                     :: Ergk , hop_to , hop_fr , rn , a_r , b_r , c_r , var1 , dv , en_c
- real*8                     :: direction(3) 
- integer                    :: t(2)
+ integer                    :: j , i , k ,l , ehs
+ real*8                     :: Ergk , hop_to , hop_fr , rn , a_r , b_r , c_r , en_c , dv 
+ real*8                     :: direction(3) , Erg_switch(2) 
+ integer                    :: t(2) , eh_switch(2)
  logical                    :: p_t 
 
 mm = size(basis)
@@ -301,96 +303,107 @@ allocate( A3  (system%atoms,3) , source= D_zero )
 allocate( A4  (system%atoms)   , source= D_zero )
 allocate( A5  (system%atoms)   , source= D_zero )
 
+rho_eh(:,1) = real( MO_ket(:,1) * MO_bra(PES(1),1) )
+rho_eh(:,1) = rho_eh(:,1) / rho_eh( PES(1) , 1 )
 
+rho_eh(:,2) = real( MO_ket(PES(2),1) * MO_bra(:,1) ) 
+rho_eh(:,2) = rho_eh(:,2) / real( MO_ket(:,1) * MO_bra(:,1) ) 
 
-do k = 1 , 2
+g_switch = max( d_zero , two * dt * rho_eh * g_switch )
 
-    rho_eh(:,k) = real( MO_ket(:,k) * MO_bra(PES(k),k) )
-    rho_eh(:,k) = rho_eh(:,k) / rho_eh( PES(k) , k )
-
-    end do
-
-g_switch = two * dt * rho_eh * g_switch
-
-call seed(7531)
+call seed( 7531 )
 call random_number( rn )
 
 par_hop = 0.d0
-p_t = .false.
 
-forall( i = 1 : size(basis) , k = 1 : 2 , g_switch(i,k) < 0 ) g_switch(i,k) = 0.d0
-
-t(1) = size(basis)
-t(2) = PES(2)
-
-!forall( i = 1 : t(1) )  par_hop(i,1) = sum( g_switch(1:i, 1 ) ) 
-!forall( i = 1 : t(2)-1 )  par_hop(i,2) = -sum(g_switch(i:PES(2),2 )) + sum( g_switch(1:i,2) )
+forall( i = 1 : mm )  par_hop(i,1) = sum( g_switch( 1:i , PES(1) ) ) 
+forall( i = 1 : mm )  par_hop(i,2) = sum( g_switch( i , 1:PES(2) ) ) 
 
 do j = 1 , 2
 
-forall( i = 1 : size(basis) )  par_hop(i,j) = sum( g_switch(1:i, j ) ) 
-p_t = .false.
+Erg_switch(j) = QM%erg(PES(j))
+eh_switch(j) = .false.
 
         do i = 1 , size(basis)
-        !do i = 1 , t(j)
-                do k = 1 , system% atoms
-        
-                        A2(k,:) = d_vec(k,i,j,:)                                          ! d 
-                        A4(k)   = sum( A2(k,:)**2 )
-        
-                        if( A4(k) .ne. 0.d0 ) direction(:) = d_vec(k,i,j,:) / A4(k)
-                        if( A4(k)  ==  0.d0 ) direction(:) = 0.d0
-        
-                        A1(k,:) = direction(:) / ( atom(k)%mass * ua_2_kg )                 ! md
-                        A2(k,:) = direction(:)
-                        A3(k,:) = atom(k)% vel(:)                                         ! v  
-        
-                        A4(k)   = dot_product( A1(k,:) , A2(k,:) )
-                        A5(k)   = dot_product( A2(k,:) , A3(k,:) )
-
-                        enddo
-
-                a_r     = sum( A4 ) / 2.0d0
-                select case( j )
-                case(1)
-                c_r     = ( QM%erg(i) - QM%erg(PES(j)) ) * ev_2_J
-                b_r     = sum( A5 ) 
-                case(2)
-                c_r     = -( QM%erg(i) - QM%erg(PES(j)) ) * ev_2_J
-                b_r     = sum( A5 ) 
-                A2      = A2
-                end select
-
-                en_c    = b_r**2 - 4.0d0 * a_r * c_r
-
-                hop_fr  = par_hop( i - 1 , j ) 
+                if( j == 1 ) then
+                hop_fr  = par_hop( i-1 , j )
                 hop_to  = par_hop( i , j )     
+                endif
+                if( j == 2 ) then
+                hop_fr  = sum( g_switch( i , 1:PES(2)-1 ) ) 
+                hop_to  = sum( g_switch( i , 1:PES(2)   ) ) 
+                endif
         
                 if( hop_fr < rn .and. rn < hop_to ) then
-                        print*, j , PES(j) , '-->' , i 
-                        print*, hop_fr , hop_to
-                        dv = roots_square( a_r , b_r , c_r  )
+                        Erg_switch(j)   = QM%erg(i)
+                        PES(j)          = i
+                        eh_switch(j)    = .true.
+                end if
 
+                if( eh_switch(j) == .true.) exit
+
+         enddo
+        
+enddo
+
+switch: if( any( eh_switch == .true. ) ) then
+        do k = 1 , system% atoms
+        
+                A2(k,:) = d_vec(k,PES(1),electron_state,:) - d_vec(k,PES(2),hole_state,:)                         ! d 
+                A4(k)   = sum( A2(k,:)**2 )
+                       
+                if( A4(k) .ne. 0.d0 ) direction(:) = A2(k,:) / A4(k)
+                if( A4(k)  ==  0.d0 ) direction(:) = 0.d0
+                        
+                A1(k,:) = direction(:) * ( atom(k)%mass * imol )                 ! md
+                A2(k,:) = direction(:)
+                A3(k,:) = atom(k)% vel(:)                                         ! v  
+                
+                A4(k)   = dot_product( A1(k,:) , A2(k,:) )
+                A5(k)   = dot_product( A1(k,:) , A3(k,:) )
+        
+        enddo
+
+        a_r     = sum( A4 ) / 2.0d0
+        c_r     = ( ( Erg_switch(1) - QM%erg(PES(1)) ) + ( QM%erg(PES(2)) - Erg_switch(2) ) ) * ev_2_J
+        b_r     = sum( A5 ) 
+
+        en_c    = b_r**2 - 4.0d0 * a_r * c_r
+
+        ehs     = sum( abs( eh_switch ) )
+
+        select case( ehs )
+                case( 0 )
+
+                        exit switch
+
+                case( 1 ) ! e or h = .true.
+
+                        dv      = roots_square( a_r , b_r , c_r  )
                         do k = 1 , system%atoms
-                                atom(k)% vel(:) = atom(k)% vel(:) * sign( 1.0d0 , en_c ) + dv * heaviside( en_c ) * A2(k,:) / (atom(k)% mass * ua_2_kg)
-                                end do
+                                atom(k)% vel(:) = atom(k)% vel(:) * sign( 1.0d0 , en_c ) + dv * heaviside( en_c ) * A2(k,:) 
+                        end do
+                        if( en_c <= 0.0d0 ) then
+                                PES(1) = electron_state
+                                PES(2) = hole_state
+                                exit switch
+                        endif
 
-                        p_t = .true.
-                        PES(j) = i
+                case( 2 ) ! eh = .true. 
 
-                      endif
+                        dv      = roots_square( a_r , b_r , c_r  )
+                        do k = 1 , system%atoms
+                                atom(k)% vel(:) = atom(k)% vel(:) + dv * A2(k,:) 
+                        end do
+                        if( en_c <= 0.0d0 ) then
+                                PES(1) = electron_state
+                                PES(2) = hole_state
+                                exit switch
+                        endif
 
-              if( p_t == .true. ) exit
-
-              enddo
-   
-      if( PES(1) == PES(2) ) exit
-
-      enddo
-
-      electron_state = PES(1)
-      hole_state = PES(2)
-
+                end select
+                
+endif switch
 
 deallocate( rho_eh , par_hop , A4 , A1 , A2 , A3 , A5 )
 
@@ -420,5 +433,20 @@ end function
 
 end function
 !  
+!
+!==============================
+ subroutine init_random_seed ()
+!==============================
+implicit none
+
+!local variables ...
+integer :: seed(5)
+
+seed = [10051965,27092004,2092002,22021967,-76571]
+
+call random_seed(put=seed(1:5))
+
+end subroutine init_random_seed
+!
 !
 end module Surface_Hopping

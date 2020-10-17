@@ -12,7 +12,7 @@ module Surface_Hopping
     use Overlap_Builder         , only  : Overlap_Matrix
     use Allocation_m            , only  : DeAllocate_Structures    
 
-    public :: SH_Force , PES
+    public :: SH_Force , PES , inv_v
 
     private
 
@@ -26,8 +26,8 @@ module Surface_Hopping
 
 
     !module variables ...
-    integer                     :: mm , newPES(2) , PES(2)
-    integer     , allocatable   :: BasisPointer(:) , DOS(:)
+    integer                     :: mm , newPES(2) , inv_v
+    integer     , allocatable   :: BasisPointer(:) , DOS(:), PES(:)
     real*8      , allocatable   :: Kernel(:,:)  , d_vec(:,:,:,:)
     real*8      , allocatable   :: grad_S(:,:) , F_vec(:) , F_mtx(:,:,:)  
     logical     , allocatable   :: mask(:,:)
@@ -69,8 +69,12 @@ real*8  , allocatable :: X_(:,:) , A1(:,:) , A2(:,:) , A3(:,:) , A4(:,:) , A5(:,
 !================================================================================================
 ! some preprocessing ...
 !================================================================================================
+if( .NOT. allocated( PES ) ) then
+allocate( PES( 2 ) )
 PES(1) = electron_state
 PES(2) = hole_state
+inv_v  = 1
+endif
 
 !call init_random_seed()
 
@@ -289,12 +293,16 @@ allocate( A3  (system%atoms,3) , source= D_zero )
 allocate( A4  (system%atoms)   , source= D_zero )
 allocate( A5  (system%atoms)   , source= D_zero )
 
+!do k = 1 , mm
+!rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) )
+!rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
+!enddo
+
 do k = 1 , mm
-rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) )
+rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) - real( MO_ket(:,2) * MO_bra(k,2) ) )
 rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
 enddo
-
-g_switch = two * dt * rho_eh * g_switch 
+g_switch = two * dt * rho_eh * g_switch
 
 g_switche = max( d_zero , g_switch )
 g_switchh = max( d_zero , transpose(g_switch) )
@@ -305,7 +313,7 @@ call random_number( rn )
 par_hop = 0.d0
 
 forall( i = 1 : mm )  par_hop(i,1) = sum( g_switche( PES(1) , 1:i ) ) 
-forall( i = 1 : mm )  par_hop(i,2) = sum( g_switchh( i , i:PES(2) ) ) 
+forall( i = 1 : mm )  par_hop(i,2) = sum( g_switchh( PES(2) , 1:i ) ) 
 
 do j = 1 , 2
 
@@ -315,13 +323,13 @@ newPES(j)    = PES(j)
         check_hop: do i = 1 , size(basis)
                 if( j == 1 ) then
                 hop_fr  = par_hop( i-1 , j )
-                hop_to  = par_hop( i , j )     
+                hop_to  = par_hop( i , j )
                 endif
                 if( j == 2 ) then
                 hop_fr  = sum( g_switchh( i , i:PES(2)-1 ) )
-                hop_to  = sum( g_switchh( i , i:PES(2) ) ) 
+                hop_to  = sum( g_switchh( i , i:PES(2) ) )
                 endif
-        
+
                 if( hop_fr < rn .and. rn < hop_to ) then
                         newPES(j)       = i
                         eh_switch(j)    = .true.
@@ -352,7 +360,7 @@ switch: if( any( eh_switch == .true. ) ) then
         enddo
 
         a_r     = sum( A4 ) / 2.0d0
-        c_r     = ( ( QM%erg(newPES(1)) + QM%erg(newPES(2)) ) - ( QM%erg(PES(1)) + QM%erg(PES(2)) ) )* ev_2_J
+        c_r     = ( ( QM%erg(newPES(1)) - QM%erg(newPES(2)) ) - ( QM%erg(PES(1)) - QM%erg(PES(2)) ) )* ev_2_J
         b_r     = -sum( A5 ) 
 
         en_c    = b_r*b_r - 4.0d0 * a_r * c_r
@@ -370,6 +378,7 @@ switch: if( any( eh_switch == .true. ) ) then
                                 endif
                                 enddo
 
+                        inv_v = -1*inv_v
                         exit switch
 
                 case( 2 ) ! h and e
@@ -386,13 +395,13 @@ switch: if( any( eh_switch == .true. ) ) then
                                 atom(k)% vel(:) = atom(k)% vel(:) - dv * A2(k,:) 
                                 endif
                                 end do
+                PES = newPES
                 exit switch
 
         end select erg_c
                 
 endif switch
 
-PES = newPES
 
 deallocate( rho_eh , par_hop , A4 , A1 , A2 , A3 , A5 , g_switche , g_switchh )
 

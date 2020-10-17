@@ -344,7 +344,7 @@ subroutine PULAY_OVERLAP(b_system, b_basis, a_system, a_basis, S_matrix, site)
 
     !$OMP parallel do schedule(static) &
     !$OMP   default(shared) private(ia, jb, ja, a, b)
-    do ia = ib , a_system%atoms
+    do ia = 1 , a_system%atoms
         do jb = 1, atom(b_system%AtNo(ib))%DOS
             do ja = 1, atom(a_system%AtNo(ia))%DOS
                 b = b_system%BasisPointer(ib) + jb
@@ -369,7 +369,11 @@ subroutine PULAY_OVERLAP(b_system, b_basis, a_system, a_basis, S_matrix, site)
     !$OMP private(ia, atom_not_moved, Rab, jb, ja, b, a, k, nb, na, lb, la, &
     !$OMP         mb, ma, aux, msup, solnorm, j, i, expb, expa, solvec, anor, &
     !$OMP         m, sol_partial, sux, rl, rl2)
-    do ia = ib + 1, a_system%atoms
+    do ia = 1, a_system%atoms
+
+        if ( ia == ib ) then
+            cycle
+        end if
 
         if (a_system%QMMM(ia) /= "QM") then
             cycle

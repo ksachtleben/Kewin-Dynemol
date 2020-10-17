@@ -83,9 +83,9 @@
 
 ! check point ...
  If( any(FMO_system%QMMM /= "QM") ) then
-     TorF = systemQQ("sed '11i >>> FMO fragment contains MM atoms <<<' warning.signal |cat")                                  
+     TorF = systemQQ("sed '11i >>> FMO fragment contains MM atoms <<<'  warning.signal |cat")                                  
      stop     
-end If
+ end If
 
  CALL Basis_Builder( FMO_system , FMO_basis )
 

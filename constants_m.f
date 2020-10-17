@@ -58,6 +58,7 @@ MODULE constants_m
     real*8  , parameter :: milli       = 1.0d-3                     ! milli unit
     real*8  , parameter :: micro       = 1.0d-6                     ! micro unit
     real*8  , parameter :: pico_2_sec  = 1.0d-12                    ! converts picosecond units to second units
+    real*8  , parameter :: sec_2_pico  = 1.0d+12                    ! converts second units to picosecond units
     real*8  , parameter :: nano_2_angs = 1.0d1                      ! converts nanometer units to angstron units
     real*8  , parameter :: mts_2_nano  = 1.0d9                      ! converts meter units to nanometer units
     real*8  , parameter :: Angs_2_mts  = 1.0d-10                    ! converts Angs units to meter units

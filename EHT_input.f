@@ -4,6 +4,7 @@ module Semi_Empirical_Parms
     use parameters_m    , only  : OPT_parms
 
     type(EHT) , public , protected :: atom(300) 
+    type(EHT) , public , protected :: atomx(300) 
     type(EHT) , allocatable , save :: EH_atom(:)
 
     public :: read_EHT_parameters , Include_OPT_parameters, EH_atom
@@ -79,6 +80,7 @@ module Semi_Empirical_Parms
  ! transform zetas to units of Angs^{-1} ...
  forall( Ang=0:3 , i=1:2 ) atom(:)%zeta(Ang,i) =  atom(:)%zeta(Ang,i) / a_Bohr 
 
+atomx = atom
  If( OPT_parms ) CALL read_OPT_parameters
 
  end subroutine read_EHT_parameters

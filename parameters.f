@@ -103,7 +103,7 @@ logical :: dynamic
 
   n_part = 2                                  ! <== # of particles to be propagated: default is e=1 , e+h=2 
 
-  hole_state     = 15                         ! <== GROUND STATE calcs     = 0 (ZERO)
+  hole_state     = 14                         ! <== GROUND STATE calcs     = 0 (ZERO)
                                               ! <== case STATIC & DP_calcs = hole state of special FMO
                                               ! <== case DYNAMIC           = intial MO for < HOLE > wavepacket in DONOR fragment
 
@@ -157,11 +157,11 @@ select case( DRIVER )
 
     case( "q_dynamics" , "slice_Cheb" , "slice_AO" , "slice_FSSH" )
         
-        dynamic = T_ 
+        dynamic = T_ .OR. Survival 
 
     case( "avrg_confgs" , "Genetic_Alg" , "diagnostic" )
 
-        dynamic = ( F_ .OR. Survival )
+        dynamic = F_ .OR. Survival
 
         If( Top_Selection > Pop_size ) stop ">> Top_Selection > Pop_size; execution aborted"
 

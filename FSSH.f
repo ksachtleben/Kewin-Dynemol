@@ -273,7 +273,7 @@ end subroutine Preprocess
  real*8                     , intent(in)    :: dt
 
  real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) , g_switche(:,:) , g_switchh(:,:) 
- real*8     , allocatable   :: A1(:,:) , A2(:,:) , A3(:,:) , A4(:), A5(:)
+ real*8     , allocatable   :: A1(:,:) , A2(:,:) , A3(:,:) , A4(:), A5(:) , aux(:,:)
  integer                    :: j , i , k ,l , ehs , h_en_c
  real*8                     :: Ergk , hop_to , hop_fr , rn , a_r , b_r , c_r , en_c , dv 
  real*8                     :: direction(3) , t(2)
@@ -282,6 +282,7 @@ end subroutine Preprocess
 
 mm = size(basis)
 allocate( rho_eh (mm,mm) )
+allocate( aux (mm,mm) )
 allocate( g_switche (mm,mm) )
 allocate( g_switchh (mm,mm) )
 allocate( par_hop(0:mm,2) , source=D_zero )
@@ -292,20 +293,24 @@ allocate( A2  (system%atoms,3) , source= D_zero )
 allocate( A3  (system%atoms,3) , source= D_zero )
 allocate( A4  (system%atoms)   , source= D_zero )
 allocate( A5  (system%atoms)   , source= D_zero )
-
-!do k = 1 , mm
-!rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) )
-!rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
-!enddo
-
 do k = 1 , mm
-rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) - real( MO_ket(:,2) * MO_bra(k,2) ) )
+rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) )
 rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
 enddo
-g_switch = two * dt * rho_eh * g_switch
 
-g_switche = max( d_zero , g_switch )
-g_switchh = max( d_zero , transpose(g_switch) )
+!do k = 1 , mm
+!rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) 
+!rho_eh(:,k) = rho_eh(:,k) / real( MO_ket(:,1) * MO_bra(:,1) ) 
+!enddo
+g_switche = two * dt * rho_eh * g_switch
+g_switche = max( d_zero , g_switche )
+
+!do k = 1 , mm
+!rho_eh(:,k) = real( MO_ket(:,2) * MO_bra(k,2) )
+!rho_eh(:,k) = rho_eh(:,k) / real( MO_ket(:,2) * MO_bra(:,2) )
+!enddo
+g_switchh = two * dt * rho_eh * g_switch
+g_switchh = max( d_zero , -1.0d0*g_switchh )
 
 call seed( 7531 )
 call random_number( rn )
@@ -321,14 +326,8 @@ eh_switch(j) = .false.
 newPES(j)    = PES(j)
 
         check_hop: do i = 1 , size(basis)
-                if( j == 1 ) then
                 hop_fr  = par_hop( i-1 , j )
                 hop_to  = par_hop( i , j )
-                endif
-                if( j == 2 ) then
-                hop_fr  = sum( g_switchh( i , i:PES(2)-1 ) )
-                hop_to  = sum( g_switchh( i , i:PES(2) ) )
-                endif
 
                 if( hop_fr < rn .and. rn < hop_to ) then
                         newPES(j)       = i
@@ -344,7 +343,7 @@ enddo
 switch: if( any( eh_switch == .true. ) ) then
         do k = 1 , system% atoms
         
-                A2(k,:) = d_vec(k,PES(1),newPES(1),:) + d_vec(k,newPES(2),PES(2),:)                         ! d 
+                A2(k,:) = d_vec(k,PES(1),newPES(1),:) - d_vec(k,PES(2),newPES(2),:)                         ! d 
                 A4(k)   = sqrt( sum( A2(k,:)**2 ) ) 
                        
                 if( A4(k) .ne. 0.d0 ) direction(:) = A2(k,:) / A4(k)
@@ -361,7 +360,7 @@ switch: if( any( eh_switch == .true. ) ) then
 
         a_r     = sum( A4 ) / 2.0d0
         c_r     = ( ( QM%erg(newPES(1)) - QM%erg(newPES(2)) ) - ( QM%erg(PES(1)) - QM%erg(PES(2)) ) )* ev_2_J
-        b_r     = -sum( A5 ) 
+        b_r     = sum( A5 ) 
 
         en_c    = b_r*b_r - 4.0d0 * a_r * c_r
         ehs     = sum( abs( eh_switch ) )
@@ -374,7 +373,7 @@ switch: if( any( eh_switch == .true. ) ) then
                 case( 1 ) ! only h or e
                         do k = 1, system% atoms
                         If( system%QMMM(k) == "QM" .AND. system%flex(k) == T_ ) then                                
-                                atom(k)% vel(:) = -atom(k)% vel(:) 
+                                atom(k)% vel(:) = atom(k)% vel(:) - 2.0d0 * ( dot_product(atom(k)% vel(:) , A2(k,:) ) ) * A2(k,:)
                                 endif
                                 enddo
 
@@ -415,8 +414,8 @@ end subroutine
  real*8  ,       dimension(2)    :: min_value_abs
  real*8                          :: roots_square
 
- min_value_abs( 1 ) = b/( two*a ) - sqrt( b*b - four*a*c )/( two*a )
- min_value_abs( 2 ) = b/( two*a ) + sqrt( b*b - four*a*c )/( two*a )
+ min_value_abs( 1 ) = -b/( two*a ) - sqrt( b*b - four*a*c )/( two*a )
+ min_value_abs( 2 ) = -b/( two*a ) + sqrt( b*b - four*a*c )/( two*a )
 
  roots_square = minval( abs( min_value_abs ) )
 

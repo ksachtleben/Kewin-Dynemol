@@ -162,7 +162,6 @@ do frame = frame_init , frame_final , frame_step
             ! MM precedes QM ; notice calling with frame -1 ...
             CALL MolecularMechanics( t_rate , frame - 1 , Net_Charge = Net_Charge_MM )   
 
-
         case default
 
             Print*, " >>> Check your nuclear_matter options <<< :" , nuclear_matter
@@ -193,7 +192,7 @@ do frame = frame_init , frame_final , frame_step
 
     CALL QMMM_erg_status( frame )
 
-!    Print*, frame 
+    Print*, frame 
 
 end do
 

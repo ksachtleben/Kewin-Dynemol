@@ -12,7 +12,7 @@ module Surface_Hopping
     use Overlap_Builder         , only  : Overlap_Matrix
     use Allocation_m            , only  : DeAllocate_Structures    
 
-    public :: SH_Force , PES , inv_v
+    public :: SH_Force , PES  , states_eh
 
     private
 
@@ -26,7 +26,7 @@ module Surface_Hopping
 
 
     !module variables ...
-    integer                     :: mm , newPES(2) , inv_v
+    integer                     :: mm , newPES(2) , fermistate
     integer     , allocatable   :: BasisPointer(:) , DOS(:), PES(:)
     real*8      , allocatable   :: Kernel(:,:)  , d_vec(:,:,:,:)
     real*8      , allocatable   :: grad_S(:,:) , F_vec(:) , F_mtx(:,:,:)  
@@ -34,6 +34,7 @@ module Surface_Hopping
 
     real*8      , allocatable   :: Omega(:,:) , pastQR(:,:) , newQR(:,:) , g_switch(:,:)
     logical     , save          :: flip , done = F_
+
 
 contains
 !
@@ -65,6 +66,9 @@ real*8  , allocatable :: X_(:,:) , A1(:,:) , A2(:,:) , A3(:,:) , A4(:,:) , A5(:,
 
 ! local parameters ...
  real*8  , parameter :: eVAngs_2_Newton = 1.602176565d-9 
+ integer :: seed(5)
+
+ seed = [10051965,27092004,2092002,22021967,-76571]
 
 !================================================================================================
 ! some preprocessing ...
@@ -73,13 +77,16 @@ if( .NOT. allocated( PES ) ) then
 allocate( PES( 2 ) )
 PES(1) = electron_state
 PES(2) = hole_state
-inv_v  = 1
+
+call random_seed( put=seed(1:5) )
 endif
 
 !call init_random_seed()
 
 mm = size(basis)
 nn = n_part
+
+fermistate = QM% Fermi_state
 
 allocate( F_mtx     (system%atoms,system%atoms,3) , source=D_zero )
 allocate( F_vec     (system%atoms)                , source=D_zero )
@@ -265,6 +272,14 @@ end subroutine Preprocess
  use MD_read_m              , only  : atom
  use parameters_m           , only  : electron_state , hole_state
  implicit none
+
+ interface
+    integer function func(k)
+       integer , intent(in) :: k
+    end function func
+ end interface
+
+
  type(structure)            , intent(inout) :: system
  type(STO_basis)            , intent(in)    :: basis(:)
  type(R_eigen)              , intent(in)    :: QM
@@ -274,11 +289,13 @@ end subroutine Preprocess
 
  real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) , g_switche(:,:) , g_switchh(:,:) 
  real*8     , allocatable   :: A1(:,:) , A2(:,:) , A3(:,:) , A4(:), A5(:) , aux(:,:)
- integer                    :: j , i , k ,l , ehs , h_en_c
+ integer    , allocatable   :: states_eh(:) 
+ integer                    :: j , i , k ,l , ehs , h_en_c , lumo
  real*8                     :: Ergk , hop_to , hop_fr , rn , a_r , b_r , c_r , en_c , dv 
- real*8                     :: direction(3) , t(2)
+ real*8                     :: direction(3) , t(2) 
  integer                    :: eh_switch(2)
  logical                    :: p_t 
+
 
 mm = size(basis)
 allocate( rho_eh (mm,mm) )
@@ -293,51 +310,46 @@ allocate( A2  (system%atoms,3) , source= D_zero )
 allocate( A3  (system%atoms,3) , source= D_zero )
 allocate( A4  (system%atoms)   , source= D_zero )
 allocate( A5  (system%atoms)   , source= D_zero )
+
 do k = 1 , mm
-rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) )
+rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) ) 
 rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
 enddo
 
-!do k = 1 , mm
-!rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) 
-!rho_eh(:,k) = rho_eh(:,k) / real( MO_ket(:,1) * MO_bra(:,1) ) 
-!enddo
 g_switche = two * dt * rho_eh * g_switch
 g_switche = max( d_zero , g_switche )
-
-!do k = 1 , mm
-!rho_eh(:,k) = real( MO_ket(:,2) * MO_bra(k,2) )
-!rho_eh(:,k) = rho_eh(:,k) / real( MO_ket(:,2) * MO_bra(:,2) )
-!enddo
 g_switchh = two * dt * rho_eh * g_switch
 g_switchh = max( d_zero , -1.0d0*g_switchh )
 
-call seed( 7531 )
 call random_number( rn )
 
 par_hop = 0.d0
 
-forall( i = 1 : mm )  par_hop(i,1) = sum( g_switche( PES(1) , 1:i ) ) 
-forall( i = 1 : mm )  par_hop(i,2) = sum( g_switchh( PES(2) , 1:i ) ) 
+forall( i = 1:mm ) par_hop(i,1) = sum( g_switche( PES(1) , 1:i ) ) 
+forall( i = 1:mm ) par_hop(i,2) = sum( g_switchh( PES(2) , 1:i ) ) 
+
+eh_switch = .false.
+newPES    = PES
 
 do j = 1 , 2
+        states_eh = func_eh_state(j)
 
-eh_switch(j) = .false.
-newPES(j)    = PES(j)
+        check: do i = 1 , size( states_eh )
+                k = states_eh( i )
 
-        check_hop: do i = 1 , size(basis)
-                hop_fr  = par_hop( i-1 , j )
-                hop_to  = par_hop( i , j )
+                hop_fr  = par_hop( k-1 , j )
+                hop_to  = par_hop( k , j )
 
                 if( hop_fr < rn .and. rn < hop_to ) then
-                        newPES(j)       = i
+                        newPES(j)       = k
                         eh_switch(j)    = .true.
-                        print*, j , i
+                        print*, j , k
                 end if
 
-                if( eh_switch(j) == .true.) exit check_hop
+                if( eh_switch(j) == .true.) exit check
 
-         enddo check_hop
+         enddo check
+
 enddo
 
 switch: if( any( eh_switch == .true. ) ) then
@@ -377,7 +389,6 @@ switch: if( any( eh_switch == .true. ) ) then
                                 endif
                                 enddo
 
-                        inv_v = -1*inv_v
                         exit switch
 
                 case( 2 ) ! h and e
@@ -401,10 +412,47 @@ switch: if( any( eh_switch == .true. ) ) then
                 
 endif switch
 
+electron_state = PES(1)
+hole_state = PES(2)
 
 deallocate( rho_eh , par_hop , A4 , A1 , A2 , A3 , A5 , g_switche , g_switchh )
 
 end subroutine
+
+!===========================================
+ function func_eh_state(k) result(states_eh)
+!===========================================
+ use parameters_m           , only  : electron_state , hole_state
+ integer , intent(in) :: k 
+
+ integer               :: i , Neh ,j
+ integer , allocatable :: temp(:) , states_eh(:)
+
+ allocate( temp( mm ) , source= 0 )
+
+ select case( k )
+        case( 2 )
+                do i = 1 , fermistate
+                        temp(i) = i
+                enddo
+                temp( fermistate+1 ) = electron_hole
+        case( 1 )
+                j = 2 
+                temp(1) = hole_state
+                do i = fermistate+1 , mm
+                        temp(j) = i
+                        j = j + 1
+                enddo
+        end select
+
+ Neh  = count( temp/=0 ) 
+ allocate( states_eh(Neh) , source = temp )
+ deallocate( temp )
+
+end function
+!
+!
+!
 !===========================================
  function roots_square( a , b , c )
 !===========================================

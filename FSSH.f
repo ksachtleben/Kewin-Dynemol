@@ -273,13 +273,6 @@ end subroutine Preprocess
  use parameters_m           , only  : electron_state , hole_state
  implicit none
 
- interface
-    integer function func(k)
-       integer , intent(in) :: k
-    end function func
- end interface
-
-
  type(structure)            , intent(inout) :: system
  type(STO_basis)            , intent(in)    :: basis(:)
  type(R_eigen)              , intent(in)    :: QM

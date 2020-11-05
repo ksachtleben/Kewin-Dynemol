@@ -45,7 +45,7 @@ module AO_adiabatic_m
     use MM_dynamics_m               , only : MolecularMechanics ,             &
                                              preprocess_MM , MoveToBoxCM
     use Ehrenfest_Builder           , only : EhrenfestForce 
-    use Surface_Hopping             , only : SH_Force , PES
+    use Surface_Hopping             , only : SH_Force , PES , Wcoh
     use Auto_Correlation_m          , only : MO_Occupation
     use Dielectric_Potential        , only : Environment_SetUp
 
@@ -511,7 +511,7 @@ do n = 1 , n_part
 
     if( eh_tag(n) == "XX" ) cycle
 
-    wp_energy(n) = sum(MO_bra(:,n)*UNI%erg(:)*MO_ket(:,n)) 
+    wp_energy(n) = sum(MO_bra(:,n)*(UNI%erg(:))*MO_ket(:,n)) 
 
     If( it == 1 ) then
 
@@ -546,7 +546,7 @@ select case ( driver )
        If( it == 1) then
            Unit_Cell% QM_erg = UNI%erg(electron_state) - UNI%erg(hole_state)
            else
-           Unit_Cell% QM_erg = UNI%erg(PES(1)) - UNI%erg(PES(2))
+           Unit_Cell% QM_erg = UNI%erg(PES(1)) - UNI%erg(PES(2)) - Wcoh
            end If
 
        case default
@@ -581,7 +581,8 @@ select case ( driver )
        If( it == 1) then
            Unit_Cell% QM_erg = UNI%erg(electron_state) - UNI%erg(hole_state)
            else
-           Unit_Cell% QM_erg = UNI%erg(PES(1)) - UNI%erg(PES(2))
+           Unit_Cell% QM_erg = UNI%erg(PES(1)) - UNI%erg(PES(2))- Wcoh
+
            end If
 
        case default

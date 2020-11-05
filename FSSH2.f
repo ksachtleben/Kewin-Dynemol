@@ -13,7 +13,7 @@ module Surface_Hopping
     use Allocation_m            , only  : DeAllocate_Structures    
     use setup_m                 , only  : inv
 
-    public :: SH_Force , PES  , Wcoh
+    public :: SH_Force , PES  , states_eh 
 
     private
 
@@ -23,7 +23,6 @@ module Surface_Hopping
     real*8  , parameter :: delta      = 1.d-8
     real*8  , parameter :: ua_2_kg = 1.660540199d-27
     real*8  , parameter :: ev_2_J  = 1.60218d-19
-    real*8  , parameter :: J_2_eV  = 6.242d+18
     real*8  , parameter :: ev_2_Jkmol  = 96.d6
     real*8  , parameter :: sec_2_pico      = 1.0d+12                    ! converts second units to picosecond units
     logical , parameter :: T_ = .true. , F_ = .false.
@@ -38,7 +37,6 @@ module Surface_Hopping
 
     real*8      , allocatable   :: Omega(:,:) , pastQR(:,:) , newQR(:,:) , g_switch(:,:)
     logical     , save          :: flip , done = F_
-    real*8                      :: Wcoh
 
 
 contains
@@ -84,7 +82,6 @@ PES(1) = electron_state
 PES(2) = hole_state
 
 call random_seed( put=seed(1:5) )
-Wcoh      = 0.0d0
 endif
 
 !call init_random_seed()
@@ -96,8 +93,9 @@ fermistate = QM% Fermi_state
 
 allocate( F_mtx     (system%atoms,system%atoms,3) , source=D_zero )
 allocate( F_vec     (system%atoms)                , source=D_zero )
-allocate( VN        (system%atoms,3)              , source= D_zero )
 allocate( d_vec     (system%atoms,mm,mm,3)         , source=D_zero )
+allocate( VN        (system%atoms,3)              , source= D_zero )
+allocate( g_switch  (mm,mm)                        , source= D_zero )
 If( .NOT. allocated(Kernel) ) then
     allocate( Kernel  (mm,mm) , source = D_zero )
 end if
@@ -191,7 +189,7 @@ end do
 
        call Hopping( system , basis , MO_bra , MO_ket ,  QM , dt ) 
 
-deallocate( mask , X_ , F_vec , F_mtx , kernel , VN )
+deallocate( mask , X_ , F_vec , F_mtx , kernel , VN, d_vec , g_switch )
 
 include 'formats.h'
 
@@ -281,7 +279,7 @@ end subroutine Preprocess
  complex*16                 , intent(in)    :: MO_ket(:,:)
  real*8                     , intent(in)    :: dt
 
- real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) , g_switche(:,:) , g_switchh(:,:) , F_nad(:,:,:)
+ real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) , g_switche(:,:) , g_switchh(:,:) , F_ad(:,:,:)
  real*8     , allocatable   :: A1(:,:) , A2(:,:) , A3(:,:) , A4(:), A5(:) , aux(:,:) , A6(:) , A7(:), A8(:) , A9(:,:) , A0(:,:)
  integer    , allocatable   :: states_eh(:) 
  integer                    :: j , i , k ,l , ehs , h_en_c , lumo , xyz
@@ -297,8 +295,7 @@ allocate( aux (mm,mm) )
 allocate( g_switche (mm,mm) )
 allocate( g_switchh (mm,mm) )
 allocate( par_hop(0:mm,2) , source=D_zero )
-allocate( F_nad(system%atoms,mm,3) , source=D_zero) 
-allocate( g_switch  (mm,mm)                        , source= D_zero )
+allocate( F_ad(system%atoms,mm,3) , source=D_zero) 
 
 !temporary
 allocate( A1  (system%atoms,3) , source= D_zero )
@@ -316,11 +313,9 @@ allocate( A0  (system%atoms,3) , source= D_zero )
 
 do xyz = 1 , 3
   
-  forall( i=1:mm ) F_nad(:,i,xyz) = d_vec(:,i,i,xyz)
+  forall( i=1:mm ) F_ad(:,i,xyz) = d_vec(:,i,i,xyz)
   forall( i=1:mm , j=1:mm , i .ne. j ) d_vec(:,i,j,xyz) = d_vec(:,i,j,xyz) / ( QM%erg(j) - QM%erg(i) ) 
   forall( i=1:mm , j=1:mm , i == j ) d_vec(:,i,j,xyz) = d_zero
-
-  forall( i=1:mm , k=1:mm ) g_switch(i,k) = g_switch(i,k) + dot_product( atom(:)% vel(xyz) , d_vec(:,i,k,xyz) )  * mts_2_angs / sec_2_pico
 
 enddo
 
@@ -329,6 +324,8 @@ do k = 1 , mm
   rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) ) 
   rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
 
+  forall( i=1:mm ) g_switch(i,k) = g_switch(i,k) + dot_product( atom(:)% vel(xyz) , d_vec(:,i,k,xyz) )  * mts_2_angs / sec_2_pico
+
 enddo
 
 g_switche = two * dt * rho_eh * g_switch
@@ -336,12 +333,14 @@ g_switche = max( d_zero , g_switche )
 g_switchh = two * dt * rho_eh * g_switch
 g_switchh = max( d_zero , -1.0d0*g_switchh )
 
+
 call random_number( rn )
 
 par_hop = 0.d0
 
 forall( i = 1:mm ) par_hop(i,1) = sum( g_switche( PES(1) , 1:i ) ) 
 forall( i = 1:mm ) par_hop(i,2) = sum( g_switchh( PES(2) , 1:i ) ) 
+
 
 eh_switch = .false.
 newPES    = PES
@@ -361,8 +360,6 @@ do j = 1 , 2
                 if( hop_fr < rn .and. rn < hop_to ) then
                         newPES(j)       = k
                         eh_switch(j)    = .true.
-                        print*, k
- !                       pause
                 end if
 
                 if( eh_switch(j) == .true.) exit check
@@ -384,8 +381,8 @@ switch: if( any( eh_switch == .true. ) ) then
                 A2(k,:) = direction(:)
                 A3(k,:) = atom(k)% vel(:)                                         ! v  
 
-                A9(k,:) = F_nad(k,newPES(1),:)  - F_nad(k,newPES(2),:)
-                A0(k,:) = F_nad(k,PES(1),:)     - F_nad(k,PES(2),:)
+                A9(k,:) = F_ad(k,newPES(1),:) - F_ad(k,newPES(2),:)
+                A0(k,:) = F_ad(k,PES(1),:) - F_ad(k,PES(2),:)
                 
                 A4(k)   = dot_product( A1(k,:) , A2(k,:) )
                 A5(k)   = dot_product( A1(k,:) , A3(k,:) )
@@ -394,7 +391,8 @@ switch: if( any( eh_switch == .true. ) ) then
                 A8(k)   = dot_product( A2(k,:) , A0(k,:) )
         
         enddo
-
+print*, F_ad
+stop
         a_r     = sum( A4 ) / 2.0d0
         c_r     = ( ( QM%erg(newPES(1)) - QM%erg(newPES(2)) ) - ( QM%erg(PES(1)) - QM%erg(PES(2)) ) )* ev_2_J
         b_r     = sum( A5 ) 
@@ -406,25 +404,21 @@ switch: if( any( eh_switch == .true. ) ) then
         cond1   = Sum( A6 ) * Sum( A7 ) < 0
         cond2   = Sum( A7 ) * Sum( A8 ) < 0
         print*, cond1, cond2
-!        if( cond1 ) pause
-!        if( cond2 ) pause
+        if( cond1 ) pause
+        if( cond2 ) pause
         erg_c: select case( h_en_c )
         case( 0 ) ! dont have energy enough to hop
           do k = 1, system% atoms
             If( system%QMMM(k) == "QM" .AND. system%flex(k) == T_ ) then                                
               If( cond1 .and. cond2 ) then
                 atom(k)% vel(:) = atom(k)% vel(:) - 2.0d0 * ( dot_product(atom(k)% vel(:) , A2(k,:) ) ) * A2(k,:) 
-              else
+              !else
                 !atom(k)% vel(:) = atom(k)% vel(:) 
-                atom(k)% vel(:) = v1*(d_vec(k,PES(1),newPES(1),:) * ( QM%erg(newPES(1)) - QM%erg(PES(1)) ) + d_vec(k,PES(2),newPES(2),:) * ( QM%erg(newPES(2)) - QM%erg(PES(2)) ))* dt / atom(k)% mass + atom(k)%  vel(:)
+                !atom(k)% vel(:) = v1*(d_vec(k,PES(1),newPES(1),:) * ( QM%erg(newPES(1)) - QM%erg(PES(1)) ) + d_vec(k,PES(2),newPES(2),:) * ( QM%erg(newPES(2)) - QM%erg(PES(2)) ))* dt / atom(k)% mass + atom(k)%  vel(:)
               endif
             endif
-            A5(k) = dot_product( atom(k)% vel(:) , atom(k)% vel(:) )
-            A6(k) = dot_product( A3(k,:) , A3(k,:) ) 
           enddo
 
-        Wcoh  = Wcoh + half * (sum( atom(:)% mass * A5(:) * imol ) - sum( atom(:)% mass * A6(:) * imol ))*J_2_eV
-        Print*, Wcoh , '<<<'
 !        pause         
         exit switch
 
@@ -446,7 +440,7 @@ endif switch
 electron_state = PES(1)
 hole_state = PES(2)
 
-deallocate( rho_eh , par_hop , A4 , A1 , A2 , A3 , A5 , g_switche , g_switchh , A6 , A7 , A8 , A9 , A0 , d_vec , g_switch )
+deallocate( rho_eh , par_hop , A4 , A1 , A2 , A3 , A5 , g_switche , g_switchh , A6 , A7 , A8 , A9 , A0 )
 
 end subroutine
 

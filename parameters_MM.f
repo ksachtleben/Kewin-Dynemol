@@ -69,11 +69,11 @@ implicit none
 !
   driver_MM              = "MM_Dynamics"       ! <== MM_Dynamics , MM_Optimize , NormalModes , Parametrize
 
-  read_velocities        = T_                   ! <== reads the initial velocities : T_ , F_
+  read_velocities        = F_                   ! <== reads the initial velocities : T_ , F_
 
   MM_input_format        = "GMX"                ! <== GMX, NAMD, GAFF
 
-  MM_log_step            =  1000                  ! <== step for saving MM results & parameters
+  MM_log_step            =  1                    ! <== step for saving MM results & parameters
   MM_frame_step          =  500                   ! <== step for saving MM results & parameters
 
   Units_MM               = "eV"                 ! <== choose OUTPUT energy units: "eV" or "kj-mol" 

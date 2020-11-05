@@ -4,7 +4,7 @@ module NVE_m
     use syst         ! using all syst
     use MD_read_m    , only: MM , atom , molecule
     use VV_Parent    , only: VV
-
+    use setup_m      , only: corr
 
     public :: NVE
 
@@ -136,9 +136,10 @@ end select
 ! calculation of the kinetic energy ...
 me % kinetic = D_zero
 do i = 1 , MM % N_of_atoms
-    me % kinetic = me % kinetic + ( atom(i) % mass ) * sum( atom(i) % vel(:) * atom(i) % vel(:) ) * half   ! <== J/kmol
+me % kinetic = me % kinetic + ( atom(i) % mass ) * sum( atom(i) % vel(:) * atom(i) % vel(:) ) * half ! <== J/kmol
 end do
 me % kinetic = me % kinetic * micro / MM % N_of_Molecules   ! <== kJ/mol
+!me % kinetic = ( me % kinetic + dot_product(corr,corr) ) * micro / MM % N_of_Molecules   ! <== kJ/mol
 
 end subroutine VV2
 !

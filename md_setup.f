@@ -35,10 +35,12 @@ module setup_m
     use MD_read_m       , only : MM , atom , molecule , species , FF
     use gmx2mdflex      , only : SpecialPairs
 
-    public :: setup , Molecular_CM , move_to_box_CM , offset
+    public :: setup , Molecular_CM , move_to_box_CM , offset , corr
 
     ! module variables ...
     logical :: there_are_NB_SpecialPairs = .false.
+    logical :: inv
+    real*8  :: corr
 
 
 contains
@@ -195,18 +197,23 @@ p(:) = 0.d0
 t(:) = 0.d0
 masstot = 0.d0
 
+
 l = 1
 do i = 1 , MM % N_of_molecules 
     do j = l , l + molecule(i) % N_of_atoms - 1
        massa = atom(j) % mass
        p(:) = p(:) + massa * atom(j) % xyz(:)
-       t(:) = t(:) + massa * atom(j) % vel(:)
+       t(:) = t(:) + massa * atom(j) % vel(:) 
        masstot = masstot + massa
     end do
     l = l + molecule(i) % N_of_atoms
 end do
 rcm(:) = p(:) / masstot  ! <== center of mass of the box of atoms
 vcm(:) = t(:) / masstot  ! <== velocity of the center of mass
+
+write( 18 , * ) rcm(1) , vcm(1)
+write( 19 , * ) rcm(2) , vcm(2)
+write( 20 , * ) rcm(3) , vcm(3)
 
 ! transform atomic coordinates and velocities to CM frame ...
 l = 1

@@ -105,17 +105,21 @@ atom( QMMM_key )% charge = atom( QMMM_key )% MM_charge
 If( .not. QMMM ) forall(xyz=1:3) atom(:)% ftotal(xyz) = atom(:)% f_MM(xyz)
 
 ! Molecular dynamics ...
+
+
 CALL this % VV1( dt )
 
-CALL move_to_box_CM
+!CALL move_to_box_CM     ! essa ou 
 
-CALL Molecular_CM
+!CALL Molecular_CM       ! essa ou 
 
 CALL ForceInter
 
 CALL ForceIntra
 
 CALL this% VV2( dt )
+
+
 
 if( mod(frame,MM_frame_step) == 0 ) CALL Saving_MM_frame( frame , dt )
 

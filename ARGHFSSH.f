@@ -65,9 +65,9 @@ integer                  :: j1 , j2 , dima , dimb
 
 ! local arrays ...
 integer , allocatable :: pairs(:)
-real*8  , allocatable :: S_fwd(:,:) , S_bck(:,:) , R1(:,:) , R2(:,:) , R3(:,:), VN(:,:) 
+real*8  , allocatable :: S_fwd(:,:) , S_bck(:,:) , R1(:) , R2(:) , R3(:,:), VN(:,:) 
 real*8                :: Force(3) , tmp_coord(3) , delta_b(3) 
-real*8  , allocatable :: X_(:,:) , A1(:,:) , A2(:,:) , A3(:,:) , A4(:,:) , A5(:,:) , A6(:,:) , A7(:,:)
+real*8  , allocatable :: X_(:,:) , A1(:,:) , A2(:) , A3(:,:) , A4(:) , A5(:) , A6(:,:) , A7(:,:)
 
 ! local parameters ...
  real*8  , parameter :: eVAngs_2_Newton = 1.602176565d-9 
@@ -97,7 +97,7 @@ fermistate = QM% Fermi_state
 allocate( F_mtx     (system%atoms,system%atoms,3) , source=D_zero )
 allocate( F_vec     (system%atoms)                , source=D_zero )
 allocate( VN        (system%atoms,3)              , source= D_zero )
-allocate( d_vec     (system%atoms,mm,mm,3)         , source=D_zero )
+allocate( d_vec     (system%atoms,mm,2,3)         , source=D_zero )
 If( .NOT. allocated(Kernel) ) then
     allocate( Kernel  (mm,mm) , source = D_zero )
 end if
@@ -128,8 +128,8 @@ If( system%QMMM(k) == "MM" .OR. system%flex(k) == F_ ) cycle
         dimb        = size( grad_S( 1 , : ) )
 
         ! temporary arrays ...
-        allocate( A1(dima,dimb) , A2(dima,dima) , A3(dima,dimb) , A4(dima,dima) , A5(dima,dimb) , A6(dima,dimb) , A7(dima,dima) ) 
-        allocate( R1(dimb,dima) , R2(dima,dima) , R3(dima,dimb) )
+        allocate( A1(dima,dimb) , A2(dima) , A3(dima,dimb) , A4(dima) , A5(dimb) , A6(dima,dimb) , A7(dima,dima) ) 
+        allocate( R1(dimb) , R2(dima) , R3(dima,dimb) )
 
 
         ! save coordinate ...
@@ -147,36 +147,37 @@ If( system%QMMM(k) == "MM" .OR. system%flex(k) == F_ ) cycle
                 system% coord (k,:) = tmp_coord - delta_b
                 CALL Overlap_Matrix( system , basis , S_bck , purpose = "Pulay" , site = K )
 
-                forall( j=1:DOS_Atom_K ) grad_S(:,j) = ( S_fwd( : , BasisPointer_K+j ) - S_bck( : , BasisPointer_K+j ) ) / (TWO*delta) 
+                do iS = 1 , 2 
 
-                forall( j=1:DOS_Atom_K ) A1(:,j) = grad_S(:,j) * X_( : , BasisPointer_K + j )   ! N_{\alpha n }
-                forall( j=1:mm )         A7(j,:) = QM%L(j,:)*QM%erg(j)                          ! Q'_{\varphi \alpha }
-                forall( j=1:DOS_Atom_K ) A3(:,j) = QM%L(:, BasisPointer_K + j )                 ! Q_{\varphi n }
-                forall( j=1:mm )         A2(j,:) = QM%L(j,:)                    ! \Phi_{\alpha}    
-                forall( j=1:mm )         A4(j,:) = QM%L(j,:)*QM%erg(j)    ! Q'_{\phi \alpha}
-                forall( j=1:DOS_Atom_K ) A5(:,j) = QM%L(: , BasisPointer_K+j )  ! Q_{\phi n}          
+                  A2(:)                               = QM%L(PES(is),:)                    ! \Phi_{\alpha}    
+                  A4(:)                               = QM%L(PES(is),:)*QM%erg(PES(is))    ! Q'_{\phi \alpha}
+                  forall( j=1:DOS_Atom_K ) A5(j)      = QM%L(PES(is) , BasisPointer_K+j )  ! Q_{\phi n}          
 
-                    !==========================================================
-                    call gemm( A2, A1 , R3 )   ! Qphi_{alpha}* N_{\alpha n} result vector size n
-                    call gemm( R3 , A3 , R2 , transb="T" )
-                    d_vec(k,:,:,xyz) = d_vec(k,:,:,xyz) - R2
+                  !==========================================================
+                  call gemv( A1, A2 , R1 , trans='T' )   ! N_{\alpha n}^{T} * \Phi_{\alpha} result vector size n
+                  call gemv( A3 , R1 , R2 )
+                  d_vec(k,:,is,xyz) = d_vec(k,:,is,xyz) - R2
 
-                    !==========================================================
-                    call gemm( QM%L , A1 , R3 )             ! Q_{\varphi \alpha} * N_{\alpha n} result matrix size \varphi n
-                    call gemm( A5 , R3 , R2 , transb="T" )
-                    d_vec(k,:,:,xyz) = d_vec(k,:,:,xyz) - R2
+                  !==========================================================
+                  call gemm( QM%L , A1 , R3 )             ! Q_{\phi \alpha} * N_{\alpha n} result matrix size \phi n
+                  call gemv( R3 , A5 , R2 )
+                  d_vec(k,:,is,xyz) = d_vec(k,:,is,xyz) - R2
 
-                    !==========================================================
-                    call gemm( A4 , grad_S , R3 ) ! (<\alpha|\nabla_{xyz}n>)^{T} * Q'_{\phi \alpha} result matrix size phi n
-                    call gemm( R3 , A3 , R2 , transb="T" )
-                    d_vec(k,:,:,xyz) = d_vec(k,:,:,xyz) + R2
+                  !==========================================================
+                  call gemv( grad_S , A4 , R1 , trans='T' ) ! (<\alpha|\nabla_{xyz}n>)^{T} * Q'_{\phi \alpha} result vector size n
+                  call gemv( A3 , R1 , R2 )
+                  d_vec(k,:,is,xyz) = d_vec(k,:,is,xyz) + R2
 
-                    !==========================================================
-                    call gemm( A7 , grad_S , R3 )           ! Q'_{\varphi \alpha } * <\alpha|\nabla_{xyz}n>
-                    call gemm( A5 , R3 , R2 , transb="T" )
-                    d_vec(k,:,:,xyz) = d_vec(k,:,:,xyz) + R2
+                  !==========================================================
+                  call gemm( A7 , grad_S , R3 )           ! Q'_{\varphi \alpha } * <\alpha|\nabla_{xyz}n>
+                  call gemv( R3 , A5 , R2 )
+                  d_vec(k,:,is,xyz) = d_vec(k,:,is,xyz) + R2
+    
+                  if( isnan( d_vec(k,PES(is),is,xyz) )) stop 'error in d_vec'
 
-                Force(xyz) = d_vec(k,PES(1),PES(1),xyz) - d_vec(k,PES(2),PES(2),xyz)
+                enddo
+
+                 Force(xyz) = d_vec(k,PES(1),1,xyz) - d_vec(k,PES(2),2,xyz)
 
         end do 
 
@@ -281,7 +282,7 @@ end subroutine Preprocess
  complex*16                 , intent(in)    :: MO_ket(:,:)
  real*8                     , intent(in)    :: dt
 
- real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) , g_switche(:,:) , g_switchh(:,:) , F_ad(:,:,:)
+ real*8     , allocatable   :: rho_eh(:,:) , par_hop(:,:) , g_switche(:,:) , g_switchh(:,:) , F_nad(:,:,:,:)
  real*8     , allocatable   :: A1(:,:) , A2(:,:) , A3(:,:) , A4(:), A5(:) , aux(:,:) , A6(:) , A7(:), A8(:) , A9(:,:) , A0(:,:)
  integer    , allocatable   :: states_eh(:) 
  integer                    :: j , i , k ,l , ehs , h_en_c , lumo , xyz
@@ -292,13 +293,13 @@ end subroutine Preprocess
 
 
 mm = size(basis)
-allocate( rho_eh (mm,mm) )
+allocate( rho_eh (mm,2) )
 allocate( aux (mm,mm) )
 allocate( g_switche (mm,mm) )
 allocate( g_switchh (mm,mm) )
 allocate( par_hop(0:mm,2) , source=D_zero )
-allocate( F_ad(system%atoms,mm,3) , source=D_zero) 
-allocate( g_switch  (mm,mm)                        , source= D_zero )
+allocate( F_nad(system%atoms,mm,2,3) , source=D_zero) 
+allocate( g_switch  (mm,2)           , source= D_zero )
 
 !temporary
 allocate( A1  (system%atoms,3) , source= D_zero )
@@ -316,38 +317,37 @@ allocate( A0  (system%atoms,3) , source= D_zero )
 
 do xyz = 1 , 3
   
-  forall( i=1:mm ) F_ad(:,i,xyz) = d_vec(:,i,i,xyz)
-  forall( i=1:mm , j=1:mm , i .ne. j ) d_vec(:,i,j,xyz) = d_vec(:,i,j,xyz) / ( QM%erg(j) - QM%erg(i) ) 
-  forall( i=1:mm , j=1:mm , i == j ) d_vec(:,i,j,xyz) = d_zero
+  forall( i=1:mm , j=1:2, i .ne. PES(j) ) F_nad(:,i,j,xyz) = -d_vec(:,i,j,xyz)
+  forall( i=1:mm , j=1:2, i .ne. PES(j) ) d_vec(:,i,j,xyz) = -d_vec(:,i,j,xyz) / ( QM%erg(PES(j)) - QM%erg(i) ) 
+  forall( i=1:mm , j=1:2, i == PES(j)   ) d_vec(:,i,j,xyz) = d_zero
+  forall( i=1:mm , j=1:2, i == PES(j)   ) F_nad(:,i,j,xyz) = d_zero
 
-  forall( i=1:mm , k=1:mm ) g_switch(i,k) = g_switch(i,k) + dot_product( atom(:)% vel(xyz) , d_vec(:,i,k,xyz) )  * mts_2_angs / sec_2_pico
-
-enddo
-
-do k = 1 , mm
-
-  rho_eh(:,k) = real( MO_ket(:,1) * MO_bra(k,1) ) - real( MO_ket(:,2) * MO_bra(k,2) ) 
-  rho_eh(:,k) = rho_eh(:,k) / ( real( MO_ket(:,1) * MO_bra(:,1) ) - real( MO_ket(:,2) * MO_bra(:,2) ) )
+  forall( i=1:mm , k=1:2) g_switch(i,k) = g_switch(i,k) + dot_product( atom(:)% vel(xyz) , d_vec(:,i,k,xyz) )  * mts_2_angs / sec_2_pico
 
 enddo
 
-g_switche = two * dt * rho_eh * g_switch
-g_switche = max( d_zero , g_switche )
-g_switchh = two * dt * rho_eh * g_switch
-g_switchh = max( d_zero , g_switche - g_switchh )
+do k = 1 , 2
+
+  rho_eh(:,k) = real( MO_ket(:,k) * MO_bra(PES(k),k) ) !- real( MO_ket(:,2) * MO_bra(k,2) ) 
+  rho_eh(:,k) = rho_eh(:,k) / rho_eh( PES(k) , k )
+
+enddo
+
+g_switch = two * dt * rho_eh * g_switch
+g_switch = max( d_zero , g_switch )
 
 call random_number( rn )
 
 par_hop = 0.d0
 
-forall( i = 1:mm ) par_hop(i,1) = sum( g_switche( PES(1) , 1:i ) ) 
-forall( i = 1:mm ) par_hop(i,2) = sum( g_switchh( PES(2) , 1:i ) )
+forall( i = 1:mm ) par_hop(i,1) = sum( g_switch( 1:i , 1 ) ) 
+forall( i = 1:mm ) par_hop(i,2) = sum( g_switch( 1:i , 2 ) ) 
 
 eh_switch = .false.
 newPES    = PES
 inv       = .false.
 
-v1 = ev_2_J * dt / ( angs_2_mts * imol * sec_2_pico )
+v1 = ev_2_J / ( angs_2_mts * imol * sec_2_pico )
 
 do j = 1 , 2 
         states_eh = func_eh_state(j)
@@ -361,35 +361,37 @@ do j = 1 , 2
                 if( hop_fr < rn .and. rn < hop_to ) then
                         newPES(j)       = k
                         eh_switch(j)    = .true.
+                        print*, k
+ !                       pause
                 end if
 
                 if( eh_switch(j) == .true.) exit check
 
          enddo check
-!exit
+exit
 enddo
 
 switch: if( any( eh_switch == .true. ) ) then
         do k = 1 , system% atoms
         
-                A2(k,:) = d_vec(k,PES(1),newPES(1),:) - d_vec(k,PES(2),newPES(2),:)                    
-                A4(k)   = sqrt( sum( A2(k,:)**2 ) ) 
+          A2(k,:) = d_vec(k,PES(1),newPES(1),:) - d_vec(k,PES(2),newPES(2),:)                    
+          A4(k)   = sqrt( sum( A2(k,:)**2 ) ) 
                        
-                if( A4(k) .ne. 0.d0 ) direction(:) = A2(k,:) / A4(k)
-                if( A4(k)  ==  0.d0 ) direction(:) = 0.d0
+          if( A4(k) .ne. 0.d0 ) direction(:) = A2(k,:) / A4(k)
+          if( A4(k)  ==  0.d0 ) direction(:) = 0.d0
                         
-                A1(k,:) = direction(:) * ( atom(k)%mass * imol )                 ! md
-                A2(k,:) = direction(:)
-                A3(k,:) = atom(k)% vel(:)                                         ! v  
+          A1(k,:) = direction(:) * ( atom(k)%mass * imol )                 ! md
+          A2(k,:) = direction(:)
+          A3(k,:) = atom(k)% vel(:)                                         ! v  
 
-                A9(k,:) = F_ad(k,newPES(1),:)  - F_ad(k,newPES(2),:)
-                A0(k,:) = F_ad(k,PES(1),:)     - F_ad(k,PES(2),:)
+          A9(k,:) = F_nad(k,newPES(1),1,:)  - F_nad(k,newPES(2),2,:)
+          A0(k,:) = F_nad(k,PES(1),1,:)     - F_nad(k,PES(2),2,:)
                 
-                A4(k)   = dot_product( A1(k,:) , A2(k,:) )
-                A5(k)   = dot_product( A1(k,:) , A3(k,:) )
-                A6(k)   = dot_product( A2(k,:) , A3(k,:) )
-                A7(k)   = dot_product( A2(k,:) , A9(k,:) )
-                A8(k)   = dot_product( A2(k,:) , A0(k,:) )
+          A4(k)   = dot_product( A1(k,:) , A2(k,:) )
+          A5(k)   = dot_product( A1(k,:) , A3(k,:) )
+          A6(k)   = dot_product( A2(k,:) , A3(k,:) )
+          A7(k)   = dot_product( A2(k,:) , A9(k,:) )
+          A8(k)   = dot_product( A2(k,:) , A0(k,:) )
         
         enddo
 
@@ -403,22 +405,17 @@ switch: if( any( eh_switch == .true. ) ) then
 
         cond1   = Sum( A6 ) * Sum( A7 ) < 0
         cond2   = Sum( A7 ) * Sum( A8 ) < 0
-!        print*, PES(1) , PES(2)
-!        print*, eh_switch
-!        print*, newPES(1) , newPES(2)
-!        print*, cond1, cond2
-!        print*, h_en_c
-!        pause
-        
+
         erg_c: select case( h_en_c )
         case( 0 ) ! dont have energy enough to hop
+
           do k = 1, system% atoms
             If( system%QMMM(k) == "QM" .AND. system%flex(k) == T_ ) then                                
               If( cond1 .and. cond2 ) then
                 atom(k)% vel(:) = atom(k)% vel(:) - 2.0d0 * ( dot_product(atom(k)% vel(:) , A2(k,:) ) ) * A2(k,:) 
               else
-!                atom(k)% vel(:) = atom(k)% vel(:) 
-                atom(k)% vel(:) = v1*(d_vec(k,PES(1),newPES(1),:) * ( QM%erg(newPES(1)) - QM%erg(PES(1)) ) + d_vec(k,PES(2),newPES(2),:) * ( QM%erg(newPES(2)) - QM%erg(PES(2)) )) / atom(k)% mass + atom(k)%  vel(:)
+                !atom(k)% vel(:) = atom(k)% vel(:) 
+                atom(k)% vel(:) = v1*(d_vec(k,PES(1),newPES(1),:) * ( QM%erg(newPES(1)) - QM%erg(PES(1)) ) - d_vec(k,PES(2),newPES(2),:) * ( QM%erg(newPES(2)) - QM%erg(PES(2)) ))* dt / atom(k)% mass + atom(k)%  vel(:)
               endif
             endif
             A5(k) = dot_product( atom(k)% vel(:) , atom(k)% vel(:) )
@@ -426,21 +423,18 @@ switch: if( any( eh_switch == .true. ) ) then
           enddo
 
         Wcoh  = Wcoh + half * (sum( atom(:)% mass * A5(:) * imol ) - sum( atom(:)% mass * A6(:) * imol ))*J_2_eV
-        Print*, Wcoh , '<<<'
-!        pause         
         exit switch
 
         case( 1 ) ! energy conserv
 
-                dv   = roots_square( a_r , b_r , c_r  )
-                do k = 1 , system%atoms
-                        If( system%QMMM(k) == "QM" .AND. system%flex(k) == T_ ) then
-                                atom(k)% vel(:) = atom(k)% vel(:) - dv * A2(k,:) 
-                                endif
-                                end do
-                PES = newPES
-                if( PES(1) == PES(2) ) Wcoh = 0.d0
-                exit switch
+          dv   = roots_square( a_r , b_r , c_r  )
+          do k = 1 , system%atoms
+            If( system%QMMM(k) == "QM" .AND. system%flex(k) == T_ ) then
+              atom(k)% vel(:) = atom(k)% vel(:) - dv * A2(k,:) 
+            endif
+          end do
+          PES = newPES
+          exit switch
 
         end select erg_c
                 
